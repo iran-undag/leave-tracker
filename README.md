@@ -10,7 +10,7 @@ A lightweight, browser-based web application for tracking team leaves, calculati
 - **KPI Dashboard:** Automatically calculates monthly Team Utilization, Sick Leave, and Emergency Leave rates based on available working days.
 - **Team Management:** Add and "soft-remove" team members. Removed members won't show in future months but their historical leave data is retained for accurate past reporting.
 - **Network Storage / Data Persistence:** Data is stored locally in your browser by default. However, you can select a local folder (or a shared network drive/cloud sync folder) to save and load the `data.json` file. This acts as a shared database that automatically syncs every 5 seconds!
-- **Excel Export:** Export the monthly Team Matrix directly to an `.xlsx` file for your records or HR submission.
+- **Excel Export:** Export the monthly Team Matrix directly to an `.xlsx` file for your records.
 
 ## Technologies Used
 

@@ -14,6 +14,7 @@ A lightweight, browser-based web application for tracking team leaves, calculati
 
 ## Calendar View
 <img width="1572" height="826" alt="image" src="https://github.com/user-attachments/assets/6c179c3a-cc85-461c-a362-48331a8f9201" />
+<img width="1558" height="241" alt="image" src="https://github.com/user-attachments/assets/3893176f-dfbc-4ef5-af13-c67dde37719a" />
 
 ## Team View
 <img width="1584" height="394" alt="image" src="https://github.com/user-attachments/assets/dd0ebaf2-a5e8-46a5-9b82-2cd8f3d5ec69" />

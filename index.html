@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Team Leave Tracker</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- SheetJS for Excel export -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="brand">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="brand-icon"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/><path d="m9 16 2 2 4-4"/></svg>
+                <h1>LeaveTracker</h1>
+            </div>
+            
+            <nav class="nav-menu">
+                <button class="nav-btn active" data-view="calendar">
+                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+                   Calendar
+                </button>
+                <button class="nav-btn" data-view="team">
+                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                   Team Matrix
+                </button>
+            </nav>
+            
+            <div class="sidebar-bottom">
+                <div class="data-connection">
+                    <h4>Data Connection</h4>
+                    <div class="status-indicator local" id="connection-status">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Local Storage</span>
+                    </div>
+                    <button id="select-dir-btn" class="secondary-btn w-full mt-2">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                        Select Shared Folder
+                    </button>
+                    <div class="tooltip-container mt-2">
+                        <button id="create-file-btn" class="secondary-btn w-full">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                            Create data.json
+                        </button>
+                        <span class="tooltip-text" id="create-file-tooltip">Select a folder first to know where to save</span>
+                    </div>
+                </div>
+
+                <div class="legend">
+                    <h4>Leave Types</h4>
+                    <div class="legend-grid">
+                        <div class="legend-item"><span class="badge badge-annual"></span> Annual (AL, AA, AP)</div>
+                        <div class="legend-item"><span class="badge badge-sick"></span> Sick (SL, SA, SP)</div>
+                        <div class="legend-item"><span class="badge badge-emergency"></span> Emerg. (EL, EA, EP)</div>
+                        <div class="legend-item"><span class="badge badge-other"></span> Other (BL, OL)</div>
+                        <div class="legend-item"><span class="badge badge-maternity"></span> Maternity (ML)</div>
+                        <div class="legend-item"><span class="badge badge-paternity"></span> Paternity (PL)</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="topbar">
+                <div class="month-selector">
+                    <button class="icon-btn" id="prev-month">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+                    </button>
+                    <h2 id="current-month-display">March 2026</h2>
+                    <button class="icon-btn" id="next-month">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+                    </button>
+                </div>
+                
+                <div class="topbar-actions">
+                    <button id="add-member-btn" class="primary-btn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>
+                        Add Member
+                    </button>
+                    <!-- Visible only on team view -->
+                    <button id="export-btn" class="secondary-btn hidden">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                        Export Excel
+                    </button>
+                </div>
+            </header>
+
+            <div class="views-container">
+                <!-- Calendar View -->
+                <section id="calendar-view" class="view section-active">
+                    <div class="calendar-header">
+                        <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+                    </div>
+                    <div id="calendar-grid" class="calendar-grid">
+                        <!-- Rendered via JS -->
+                    </div>
+                    
+                    <!-- KPI Dashboard -->
+                    <div class="kpi-dashboard mt-6">
+                        <h3>Team Analytics (This Month)</h3>
+                        <div class="kpi-cards">
+                            <div class="kpi-card">
+                                <h5>Team Utilization Rate</h5>
+                                <div class="kpi-value" id="kpi-utilization">--%</div>
+                                <div class="kpi-formula">((Work Days - Taken) / Work Days) x 100</div>
+                                <div class="kpi-subtext" id="kpi-utilization-sub"></div>
+                            </div>
+                            <div class="kpi-card">
+                                <h5>Sick Leave Rate</h5>
+                                <div class="kpi-value" id="kpi-sick">--%</div>
+                                <div class="kpi-formula">(Sick Leaves / Work Days) x 100</div>
+                                <div class="kpi-subtext" id="kpi-sick-sub"></div>
+                            </div>
+                            <div class="kpi-card">
+                                <h5>Emergency Leave Rate</h5>
+                                <div class="kpi-value" id="kpi-emergency">--%</div>
+                                <div class="kpi-formula">(Emergency / Work Days) x 100</div>
+                                <div class="kpi-subtext" id="kpi-emergency-sub"></div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Team Matrix View -->
+                <section id="team-view" class="view hidden">
+                    <div class="table-card">
+                        <div class="table-responsive">
+                            <table class="team-table" id="team-table">
+                                <thead>
+                                    <!-- Rendered via JS -->
+                                </thead>
+                                <tbody>
+                                    <!-- Rendered via JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- Holiday Selector -->
+                    <div class="holiday-controls">
+                        <span class="holiday-label">Add Holidays (Max 3):</span>
+                        <select id="country-select" class="dropdown">
+                            <option value="">Select a country...</option>
+                            <option value="PH">Philippines</option>
+                            <!-- API will populate this -->
+                        </select>
+                        <div class="holiday-links" id="holiday-selector">
+                            <!-- Selected regions added here -->
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div id="add-member-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Team Members</h3>
+                <button class="close-modal"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div class="modal-body">
+                <form id="add-member-form">
+                    <div class="input-group">
+                        <input type="text" id="member-name-input" placeholder="Enter team member name" required>
+                        <button type="submit" class="primary-btn">Add</button>
+                    </div>
+                </form>
+                <div class="members-list-container">
+                    <h4>Current Members</h4>
+                    <ul id="members-list" class="members-list">
+                        <!-- Rendered via JS -->
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context Menu for Leave Selection -->
+    <div id="leave-context-menu" class="context-menu extended-menu">
+        <div class="ctx-grid">
+            <div class="ctx-col">
+                <strong>Annual</strong>
+                <button class="ctx-btn" data-type="AL"><span class="badge badge-annual"></span> AL (Whole)</button>
+                <button class="ctx-btn" data-type="AA"><span class="badge badge-annual"></span> AA (AM)</button>
+                <button class="ctx-btn" data-type="AP"><span class="badge badge-annual"></span> AP (PM)</button>
+            </div>
+            <div class="ctx-col">
+                <strong>Sick</strong>
+                <button class="ctx-btn" data-type="SL"><span class="badge badge-sick"></span> SL (Whole)</button>
+                <button class="ctx-btn" data-type="SA"><span class="badge badge-sick"></span> SA (AM)</button>
+                <button class="ctx-btn" data-type="SP"><span class="badge badge-sick"></span> SP (PM)</button>
+            </div>
+            <div class="ctx-col">
+                <strong>Emergency</strong>
+                <button class="ctx-btn" data-type="EL"><span class="badge badge-emergency"></span> EL (Whole)</button>
+                <button class="ctx-btn" data-type="EA"><span class="badge badge-emergency"></span> EA (AM)</button>
+                <button class="ctx-btn" data-type="EP"><span class="badge badge-emergency"></span> EP (PM)</button>
+            </div>
+            <div class="ctx-col">
+                <strong>Other</strong>
+                <button class="ctx-btn" data-type="BL"><span class="badge badge-other"></span> BL (Bereav.)</button>
+                <button class="ctx-btn" data-type="OL"><span class="badge badge-other"></span> OL (Other)</button>
+                <button class="ctx-btn" data-type="ML"><span class="badge badge-maternity"></span> ML (Matern.)</button>
+                <button class="ctx-btn" data-type="PL"><span class="badge badge-paternity"></span> PL (Patern.)</button>
+            </div>
+        </div>
+        <div class="ctx-divider"></div>
+        <button class="ctx-btn ctx-clear w-full-btn" data-type="CLEAR" style="justify-content: center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg> Clear Leave</button>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

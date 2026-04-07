@@ -16,6 +16,66 @@ let currentDate = new Date();
 let currentView = 'calendar'; // 'calendar' or 'team'
 let contextMenuTarget = null; // Store { dateString, employeeId, cellElement }
 
+// ========================================
+// SECURITY PATCHES - NEW FUNCTIONS
+// ========================================
+
+/**
+ * SECURITY FIX #2: Validate JSON state structure
+ * Prevents JSON injection via corrupted data.json files
+ */
+function validateState(obj) {
+    try {
+        if (typeof obj !== 'object' || obj === null) return false;
+        
+        // Validate required properties and types
+        if (!Array.isArray(obj.employees)) return false;
+        if (typeof obj.leaves !== 'object' || obj.leaves === null) return false;
+        if (!Array.isArray(obj.activeRegions)) return false;
+        if (typeof obj.customHolidays !== 'object' || obj.customHolidays === null) return false;
+        
+        // Validate employees array structure
+        if (!obj.employees.every(emp => 
+            emp && typeof emp === 'object' && 
+            typeof emp.id === 'string' && 
+            typeof emp.name === 'string'
+        )) return false;
+        
+        // Validate leaves object (string values only)
+        if (!Object.values(obj.leaves).every(val => typeof val === 'string')) return false;
+        
+        // Validate activeRegions (array of strings)
+        if (!obj.activeRegions.every(r => typeof r === 'string')) return false;
+        
+        // Validate customHolidays (string values only)
+        if (!Object.values(obj.customHolidays).every(val => typeof val === 'string')) return false;
+        
+        return true;
+    } catch (e) {
+        console.error('State validation error:', e);
+        return false;
+    }
+}
+
+/**
+ * SECURITY FIX #1: Safe DOM element creation
+ * Prevents XSS by using textContent instead of innerHTML
+ */
+function createSafeChip(empName, leaveType) {
+    const chip = document.createElement('div');
+    chip.className = `chip chip-${leaveType}`;
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = empName; // Safe: uses textContent
+    
+    chip.appendChild(nameSpan);
+    return chip;
+}
+
+// ========================================
+// END SECURITY PATCHES
+// ========================================
+
 // DOM Elements
 const views = {
     calendar: document.getElementById('calendar-view'),
@@ -161,6 +221,10 @@ async function saveToFileSystem() {
     }
 }
 
+/**
+ * PATCHED: readFromFile()
+ * SECURITY FIX #2: Added state validation before using parsed JSON
+ */
 async function readFromFile() {
     if (!fileHandle) return;
     try {
@@ -168,9 +232,22 @@ async function readFromFile() {
         const contents = await file.text();
         
         if (contents) {
-            state = JSON.parse(contents);
-            if (!state.activeRegions) state.activeRegions = ['PH'];
-            renderApp();
+            try {
+                const parsed = JSON.parse(contents);
+                
+                // SECURITY: Validate parsed state structure BEFORE using it
+                if (validateState(parsed)) {
+                    state = parsed;
+                    if (!state.activeRegions) state.activeRegions = ['PH'];
+                    renderApp();
+                } else {
+                    console.error('Invalid state structure in data.json');
+                    alert("Loaded data.json is invalid or corrupted. Data will not be used.");
+                }
+            } catch (parseError) {
+                console.error('JSON parsing error:', parseError);
+                alert("Failed to parse data.json. File may be corrupted.");
+            }
         }
     } catch (e) {
         console.error('Failed to read file', e);
@@ -414,7 +491,10 @@ function updateMonthDisplay() {
     monthDisplay.textContent = currentDate.toLocaleDateString('en-US', opts);
 }
 
-// Calendar View
+/**
+ * PATCHED: renderCalendar()
+ * SECURITY FIX #1: Use safe DOM creation instead of innerHTML with user data
+ */
 function renderCalendar() {
     calendarGrid.innerHTML = '';
     
@@ -448,27 +528,48 @@ function renderCalendar() {
         const holidayName = getHolidayName(dateStr);
         const isWeekend = new Date(year, month, day).getDay() === 0 || new Date(year, month, day).getDay() === 6;
 
-        let chipsHtml = '';
+        // SECURITY FIX #1: Create header safely using DOM methods
+        const headerDiv = document.createElement('div');
+        headerDiv.className = 'day-header';
+        
+        const numDiv = document.createElement('div');
+        numDiv.className = 'day-number';
+        numDiv.textContent = day; // Safe: uses textContent
+        headerDiv.appendChild(numDiv);
+        
+        if (holidayName) {
+            const holidayDiv = document.createElement('div');
+            holidayDiv.className = 'holiday-name';
+            holidayDiv.title = holidayName;
+            holidayDiv.textContent = holidayName; // Safe: uses textContent
+            headerDiv.appendChild(holidayDiv);
+        } else if (isWeekend) {
+            const wDiv = document.createElement('div');
+            wDiv.className = 'holiday-name';
+            wDiv.style.background = 'var(--weekend-bg)';
+            wDiv.style.color = 'var(--weekend)';
+            wDiv.textContent = 'Weekend';
+            headerDiv.appendChild(wDiv);
+        }
+
+        // SECURITY FIX #1: Create chips using safe DOM creation
+        const chipsDiv = document.createElement('div');
+        chipsDiv.className = 'leave-chips';
+        
         getVisibleEmployees().forEach(emp => {
             const key = `${dateStr}_${emp.id}`;
             if (state.leaves[key]) {
                 const type = state.leaves[key];
-                chipsHtml += `<div class="chip chip-${type}"><span>${emp.name}</span></div>`;
+                // Use safe chip creation function
+                const chip = createSafeChip(emp.name, type);
+                chipsDiv.appendChild(chip);
             }
         });
 
-        let headerHtml = `<div class="day-header"><div class="day-number">${day}</div>`;
-        if (holidayName) {
-            headerHtml += `<div class="holiday-name" title="${holidayName}">${holidayName}</div>`;
-        } else if (isWeekend) {
-            headerHtml += `<div class="holiday-name" style="background:var(--weekend-bg); color:var(--weekend);">Weekend</div>`;
-        }
-        headerHtml += `</div>`;
-
-        dayEl.innerHTML = `
-            ${headerHtml}
-            <div class="leave-chips">${chipsHtml}</div>
-        `;
+        // Append header and chips to day element
+        dayEl.appendChild(headerDiv);
+        dayEl.appendChild(chipsDiv);
+        
         calendarGrid.appendChild(dayEl);
     }
 }
@@ -573,18 +674,27 @@ function hideContextMenu() {
     contextMenuTarget = null;
 }
 
-// Modal Members List
+/**
+ * PATCHED: renderMembersList()
+ * SECURITY FIX #1: Use safe DOM creation instead of innerHTML
+ */
 function renderMembersList() {
     membersList.innerHTML = '';
     getVisibleEmployees().forEach(emp => {
         const li = document.createElement('li');
         li.className = 'member-item';
-        li.innerHTML = `
-            <span>${emp.name}</span>
-            <button class="remove-member" data-id="${emp.id}">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-            </button>
-        `;
+        
+        // SECURITY FIX #1: Create name span safely
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = emp.name; // Safe: uses textContent
+        
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-member';
+        removeBtn.setAttribute('data-id', emp.id);
+        removeBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9"></path></svg>`;
+        
+        li.appendChild(nameSpan);
+        li.appendChild(removeBtn);
         membersList.appendChild(li);
     });
 

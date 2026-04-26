@@ -125,6 +125,9 @@ function loadState() {
 async function fetchAvailableCountries() {
     try {
         const res = await fetch('https://date.nager.at/api/v3/AvailableCountries');
+        if (!res.ok) {
+            throw new Error(`API returned ${res.status}`);
+        }
         const countries = await res.json();
         countries.sort((a,b) => a.name.localeCompare(b.name));
         let options = '<option value="">Select a country...</option>';
@@ -229,13 +232,18 @@ function updateConnectionStatus(mode) {
 
 /**
  * Enter or exit locked (read-only) mode.
+ * FIX #1: Use textContent instead of innerHTML to prevent XSS
  */
 function setLockedMode(locked, holderName) {
     isLocked = locked;
     if (locked) {
         document.body.classList.add('app-locked');
         lockBanner.classList.remove('hidden');
-        lockBannerText.innerHTML = `This database is currently being edited by <strong>${holderName}</strong>. You are in read-only mode.`;
+        // SECURITY FIX: Use safe DOM manipulation instead of innerHTML
+        const lockBannerContent = document.createElement('span');
+        lockBannerContent.textContent = `This database is currently being edited by ${holderName}. You are in read-only mode.`;
+        lockBannerText.innerHTML = ''; // Clear old content
+        lockBannerText.appendChild(lockBannerContent);
         updateConnectionStatus('readonly');
     } else {
         document.body.classList.remove('app-locked');
@@ -293,7 +301,20 @@ function stopHeartbeat() {
     }
 }
 
+/**
+ * Generate a cryptographically secure random ID.
+ * FIX #4: Use crypto.getRandomValues instead of Math.random()
+ */
 function generateId() {
+    // Use crypto API for secure random ID generation
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+        const array = new Uint8Array(6);
+        crypto.getRandomValues(array);
+        return Array.from(array)
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
+    }
+    // Fallback for environments without crypto API
     return Math.random().toString(36).substr(2, 9);
 }
 
@@ -566,7 +587,9 @@ function updateMonthDisplay() {
     monthDisplay.textContent = currentDate.toLocaleDateString('en-US', opts);
 }
 
-// Calendar View
+/**
+ * FIX #2 & #3: Safe rendering of calendar with proper text escaping
+ */
 function renderCalendar() {
     calendarGrid.innerHTML = '';
     
@@ -600,27 +623,49 @@ function renderCalendar() {
         const holidayName = getHolidayName(dateStr);
         const isWeekend = new Date(year, month, day).getDay() === 0 || new Date(year, month, day).getDay() === 6;
 
-        let chipsHtml = '';
+        // Create header
+        const headerDiv = document.createElement('div');
+        headerDiv.className = 'day-header';
+        
+        const dayNumberDiv = document.createElement('div');
+        dayNumberDiv.className = 'day-number';
+        dayNumberDiv.textContent = day;
+        headerDiv.appendChild(dayNumberDiv);
+        
+        if (holidayName) {
+            const holidayDiv = document.createElement('div');
+            holidayDiv.className = 'holiday-name';
+            holidayDiv.title = holidayName;
+            holidayDiv.textContent = holidayName; // SECURITY FIX: Use textContent for holiday names
+            headerDiv.appendChild(holidayDiv);
+        } else if (isWeekend) {
+            const weekendDiv = document.createElement('div');
+            weekendDiv.className = 'holiday-name';
+            weekendDiv.style.background = 'var(--weekend-bg)';
+            weekendDiv.style.color = 'var(--weekend)';
+            weekendDiv.textContent = 'Weekend';
+            headerDiv.appendChild(weekendDiv);
+        }
+
+        // Create chips container
+        const chipsDiv = document.createElement('div');
+        chipsDiv.className = 'leave-chips';
+        
         getVisibleEmployees().forEach(emp => {
             const key = `${dateStr}_${emp.id}`;
             if (state.leaves[key]) {
                 const type = state.leaves[key];
-                chipsHtml += `<div class="chip chip-${type}"><span>${emp.name}</span></div>`;
+                const chip = document.createElement('div');
+                chip.className = `chip chip-${type}`;
+                const span = document.createElement('span');
+                span.textContent = emp.name; // SECURITY FIX: Use textContent for employee names
+                chip.appendChild(span);
+                chipsDiv.appendChild(chip);
             }
         });
 
-        let headerHtml = `<div class="day-header"><div class="day-number">${day}</div>`;
-        if (holidayName) {
-            headerHtml += `<div class="holiday-name" title="${holidayName}">${holidayName}</div>`;
-        } else if (isWeekend) {
-            headerHtml += `<div class="holiday-name" style="background:var(--weekend-bg); color:var(--weekend);">Weekend</div>`;
-        }
-        headerHtml += `</div>`;
-
-        dayEl.innerHTML = `
-            ${headerHtml}
-            <div class="leave-chips">${chipsHtml}</div>
-        `;
+        dayEl.appendChild(headerDiv);
+        dayEl.appendChild(chipsDiv);
         calendarGrid.appendChild(dayEl);
     }
 }
@@ -735,7 +780,7 @@ function renderMembersList() {
         li.innerHTML = `
             <span>${emp.name}</span>
             <button class="remove-member" data-id="${emp.id}">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2[...]
             </button>
         `;
         membersList.appendChild(li);

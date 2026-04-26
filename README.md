@@ -1,7 +1,6 @@
 # Team Leave Tracker
 
-A robust, browser-based web application for tracking your team leaves, calculating utilization metrics, and ensuring team coverage. Now powered by SQLite for improved reliability and concurrency. 
-There is usually an excel leave tracker being used by the team, even though there is already a corporate time tool. This replaces that excel file and aims to remove the hassle of maintaining it i.e. add a new sheet each month, add holidays, etc. It can be placed in a shared network drive and run index.html, no webserver needed.
+A robust, browser-based web application for tracking team leaves, calculating utilization metrics, and ensuring team coverage. Now powered by SQLite for improved reliability and concurrency.
 
 ## Features
 
@@ -21,13 +20,6 @@ There is usually an excel leave tracker being used by the team, even though ther
 - **File System Access API** for local/shared folder persistence.
 - **[Nager.Date API](https://date.nager.at/)** for public holidays.
 - **[SheetJS](https://sheetjs.com/)** for Excel export.
-
-## Calendar View
-<img width="1609" height="817" alt="image" src="https://github.com/user-attachments/assets/98612b91-f8c3-4771-a930-95cc8c8a2064" />
-
-## Team View
-<img width="1850" height="940" alt="image" src="https://github.com/user-attachments/assets/c25e2be0-11af-4a34-8a52-0b121de7796b" />
-
 
 ## How to Run
 

@@ -1,19 +1,3 @@
-/**
- * Escape HTML special characters to prevent XSS.
- */
-function escapeHTML(str) {
-    if (typeof str !== 'string') return str;
-    return str.replace(/[&<>"']/g, function(m) {
-        return {
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#39;'
-        }[m];
-    });
-}
-
 // State management
 let state = {
     employees: [],
@@ -38,6 +22,7 @@ let contextMenuTarget = null; // Store { dateString, employeeId, cellElement }
 
 // DOM Elements
 const views = {
+    setup: document.getElementById('setup-view'),
     calendar: document.getElementById('calendar-view'),
     team: document.getElementById('team-view')
 };
@@ -92,8 +77,16 @@ async function init() {
     setupEventListeners();
     await fetchAvailableCountries();
     await fetchActiveHolidays();
-    renderApp();
     
+    if (dbFileHandle) {
+        enableApp();
+    } else {
+        // Ensure setup view is active if no database
+        switchView('setup');
+    }
+    
+    renderApp();
+
     // Auto sync from file system every 5 seconds if connected
     setInterval(async () => {
         // Only read from file if we are in locked (read-only) mode.
@@ -142,19 +135,19 @@ async function fetchAvailableCountries() {
     try {
         const res = await fetch('https://date.nager.at/api/v3/AvailableCountries');
         const countries = await res.json();
-        countries.sort((a,b) => a.name.localeCompare(b.name));
+        countries.sort((a, b) => a.name.localeCompare(b.name));
         let options = '<option value="">Select a country...</option>';
         countries.forEach(c => {
-            options += `<option value="${escapeHTML(c.countryCode)}">${escapeHTML(c.name)}</option>`;
+            options += `<option value="${c.countryCode}">${c.name}</option>`;
         });
         countrySelect.innerHTML = options;
-    } catch(e) { console.error('Failed to fetch countries', e); }
+    } catch (e) { console.error('Failed to fetch countries', e); }
 }
 
 async function fetchActiveHolidays() {
     const year = currentDate.getFullYear();
     if (!state.activeRegions) state.activeRegions = [];
-    
+
     for (const code of state.activeRegions) {
         const cacheKey = `${code}_${year}`;
         if (!holidayCache[cacheKey]) {
@@ -166,7 +159,7 @@ async function fetchActiveHolidays() {
                     data.forEach(h => { mapped[h.date] = h.name; }); // Using English name for consistency
                     holidayCache[cacheKey] = mapped;
                 }
-            } catch(e) { console.error('Holiday API err', e); }
+            } catch (e) { console.error('Holiday API err', e); }
         }
     }
 }
@@ -190,7 +183,7 @@ function getVisibleEmployees() {
     const viewYear = currentDate.getFullYear();
     const viewMonth = String(currentDate.getMonth() + 1).padStart(2, '0');
     const viewYM = `${viewYear}-${viewMonth}`;
-    
+
     return state.employees.filter(emp => {
         if (!emp.endYearMonth) return true; // Active indefinitely
         return viewYM <= emp.endYearMonth; // Visible if current month is on or before their end month
@@ -251,7 +244,7 @@ function setLockedMode(locked, holderName) {
     if (locked) {
         document.body.classList.add('app-locked');
         lockBanner.classList.remove('hidden');
-        lockBannerText.innerHTML = `This database is currently being edited by <strong>${escapeHTML(holderName)}</strong>. You are in read-only mode.`;
+        lockBannerText.innerHTML = `This database is currently being edited by <strong>${holderName}</strong>. You are in read-only mode.`;
         updateConnectionStatus('readonly');
     } else {
         document.body.classList.remove('app-locked');
@@ -320,7 +313,7 @@ function resetUserName() {
     localStorage.removeItem('leavetracker_username');
     const oldName = currentUserName;
     currentUserName = getLockUserName();
-    
+
     // If we have the lock, update it with the new name
     if (dirHandle && !isLocked && currentUserName !== oldName) {
         acquireLock(dirHandle, currentUserName).then(() => {
@@ -333,15 +326,38 @@ function resetUserName() {
     }
 }
 
+/**
+ * Transitions the app from setup mode to full functionality.
+ */
+function enableApp() {
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) sidebar.classList.remove('sidebar-inactive');
+    
+    const navBtns = document.querySelectorAll('.nav-btn');
+    navBtns.forEach(btn => {
+        btn.classList.remove('disabled');
+        if (btn.getAttribute('data-view') === 'calendar') {
+            btn.classList.add('active');
+        }
+    });
+
+    switchView('calendar');
+    
+    const topbar = document.getElementById('topbar');
+    if (topbar) topbar.classList.remove('hidden');
+}
+
 // Event Listeners
 function setupEventListeners() {
     // Navigation
     navBtns.forEach(btn => {
         btn.addEventListener('click', (e) => {
+            if (btn.classList.contains('disabled')) return;
+            
             const btnTgt = e.target.closest('.nav-btn');
             navBtns.forEach(b => b.classList.remove('active'));
             btnTgt.classList.add('active');
-            
+
             const view = btnTgt.getAttribute('data-view');
             switchView(view);
         });
@@ -349,12 +365,14 @@ function setupEventListeners() {
 
     // Month Navigation
     prevBtn.addEventListener('click', async () => {
+        if (!dbFileHandle) return;
         currentDate.setMonth(currentDate.getMonth() - 1);
         await fetchActiveHolidays();
         renderApp();
     });
-    
+
     nextBtn.addEventListener('click', async () => {
+        if (!dbFileHandle) return;
         currentDate.setMonth(currentDate.getMonth() + 1);
         await fetchActiveHolidays();
         renderApp();
@@ -366,8 +384,32 @@ function setupEventListeners() {
             try {
                 dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
                 await checkDataFile();
+                if (dbFileHandle) {
+                    enableApp();
+                }
             } catch (e) {
                 console.error('Directory selection failed/cancelled', e);
+            }
+        });
+    }
+
+    // Setup View Buttons
+    const setupSelectBtn = document.getElementById('setup-select-dir-btn');
+    const setupCreateBtn = document.getElementById('setup-create-file-btn');
+
+    if (setupSelectBtn) {
+        setupSelectBtn.addEventListener('click', () => selectDirBtn.click());
+    }
+
+    if (setupCreateBtn) {
+        setupCreateBtn.addEventListener('click', () => {
+            if (dirHandle) {
+                createFileBtn.click();
+            } else {
+                // If no dir handle yet, we need to pick a folder first
+                selectDirBtn.click().then(() => {
+                    if (dirHandle) createFileBtn.click();
+                });
             }
         });
     }
@@ -393,14 +435,15 @@ function setupEventListeners() {
                 currentUserName = getLockUserName();
                 await acquireLock(dirHandle, currentUserName);
                 startHeartbeat();
-                
+
                 updateConnectionStatus('connected');
                 createFileBtn.disabled = true;
                 createFileBtn.classList.add('disabled-btn');
                 createFileTooltip.textContent = 'Database connected';
-                
+
                 // Refresh state from the new database
                 loadState();
+                enableApp();
                 renderApp();
             } catch (e) {
                 console.error('Failed to create database', e);
@@ -410,7 +453,7 @@ function setupEventListeners() {
 
     // Modals
     addMemberBtn.addEventListener('click', () => {
-        if (isLocked) return;
+        if (!dbFileHandle || isLocked) return;
         renderMembersList();
         addMemberModal.classList.add('active');
         memberNameInput.focus();
@@ -452,13 +495,13 @@ function setupEventListeners() {
             if (!contextMenuTarget) return;
             const type = e.target.closest('.ctx-btn').getAttribute('data-type');
             const { dateStr, empId } = contextMenuTarget;
-            
+
             if (type === 'CLEAR') {
                 clearLeave(dateStr, empId);
             } else {
                 setLeave(dateStr, empId, type);
             }
-            
+
             state = getFullState();
             saveState();
             hideContextMenu();
@@ -512,13 +555,13 @@ function setupEventListeners() {
         if (isLocked) return;
         const dayEl = e.target.closest('.calendar-day');
         if (!dayEl || dayEl.classList.contains('empty')) return;
-        
+
         // Prevent click if clicking inside an existing chip
         if (e.target.closest('.chip')) return;
-        
+
         const dateStr = dayEl.getAttribute('data-date');
         if (!dateStr) return;
-        
+
         const existing = (state.customHolidays && state.customHolidays[dateStr]) ? state.customHolidays[dateStr] : '';
         const name = prompt(`Add custom holiday for ${dateStr} (Leave blank to remove):`, existing);
         if (name !== null) {
@@ -535,12 +578,14 @@ function setupEventListeners() {
 }
 
 function switchView(viewName) {
+    if (!dbFileHandle && viewName !== 'setup') return;
+    
     currentView = viewName;
     Object.values(views).forEach(v => {
         v.classList.remove('section-active');
         setTimeout(() => v.classList.add('hidden'), 300); // Wait for transition
     });
-    
+
     setTimeout(() => {
         views[viewName].classList.remove('hidden');
         setTimeout(() => {
@@ -572,7 +617,7 @@ function updateHolidaySelector() {
         const btn = document.createElement('button');
         btn.className = 'holiday-btn active';
         btn.setAttribute('data-region', code);
-        btn.innerHTML = `${escapeHTML(code)} <span class="remove-region">&times;</span>`;
+        btn.innerHTML = `${code} <span class="remove-region">&times;</span>`;
         holidaySelectorLinks.appendChild(btn);
     });
 }
@@ -585,13 +630,13 @@ function updateMonthDisplay() {
 // Calendar View
 function renderCalendar() {
     calendarGrid.innerHTML = '';
-    
+
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
-    
+
     const firstDay = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
-    
+
     const today = new Date();
     const isCurrentMonth = today.getMonth() === month && today.getFullYear() === year;
 
@@ -612,7 +657,7 @@ function renderCalendar() {
 
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         dayEl.setAttribute('data-date', dateStr);
-        
+
         const holidayName = getHolidayName(dateStr);
         const isWeekend = new Date(year, month, day).getDay() === 0 || new Date(year, month, day).getDay() === 6;
 
@@ -621,13 +666,13 @@ function renderCalendar() {
             const key = `${dateStr}_${emp.id}`;
             if (state.leaves[key]) {
                 const type = state.leaves[key];
-                chipsHtml += `<div class="chip chip-${type}"><span>${escapeHTML(emp.name)}</span></div>`;
+                chipsHtml += `<div class="chip chip-${type}"><span>${emp.name}</span></div>`;
             }
         });
 
         let headerHtml = `<div class="day-header"><div class="day-number">${day}</div>`;
         if (holidayName) {
-            headerHtml += `<div class="holiday-name" title="${escapeHTML(holidayName)}">${escapeHTML(holidayName)}</div>`;
+            headerHtml += `<div class="holiday-name" title="${holidayName}">${holidayName}</div>`;
         } else if (isWeekend) {
             headerHtml += `<div class="holiday-name" style="background:var(--weekend-bg); color:var(--weekend);">Weekend</div>`;
         }
@@ -646,7 +691,7 @@ function renderTeamTable() {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
-    
+
     // Build Header
     let theadHtml = '<tr><th>Team Member</th>';
     for (let day = 1; day <= daysInMonth; day++) {
@@ -654,12 +699,14 @@ function renderTeamTable() {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         const holidayName = getHolidayName(dateStr);
         const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-        
+
         let cls = isWeekend ? 'weekend-col' : '';
         if (holidayName) cls += ' holiday-col';
+        const titleAttr = holidayName ? `title="${holidayName}"` : '';
+
         const dayName = d.toLocaleDateString('en-US', { weekday: 'short' }).substr(0, 2);
-        theadHtml += `<th class="${cls}" ${holidayName ? `title="${escapeHTML(holidayName)}"` : ''}>
-            <div>${escapeHTML(dayName)}</div>
+        theadHtml += `<th class="${cls}" ${titleAttr}>
+            <div>${dayName}</div>
             <div>${day}</div>
         </th>`;
     }
@@ -668,9 +715,9 @@ function renderTeamTable() {
 
     // Build Body
     teamTbody.innerHTML = '';
-    
+
     const visibleEmployees = getVisibleEmployees();
-    
+
     if (visibleEmployees.length === 0) {
         teamTbody.innerHTML = `<tr><td colspan="${daysInMonth + 1}" style="text-align:center; padding: 40px;">No team members added yet. Click 'Add Member' to start.</td></tr>`;
         return;
@@ -678,11 +725,11 @@ function renderTeamTable() {
 
     visibleEmployees.forEach(emp => {
         const tr = document.createElement('tr');
-        
+
         const nameTd = document.createElement('td');
         nameTd.textContent = emp.name;
         tr.appendChild(nameTd);
-        
+
         for (let day = 1; day <= daysInMonth; day++) {
             const d = new Date(year, month, day);
             const isWeekend = d.getDay() === 0 || d.getDay() === 6;
@@ -690,9 +737,9 @@ function renderTeamTable() {
             const key = `${dateStr}_${emp.id}`;
             const leaveType = state.leaves[key];
             const holidayName = getHolidayName(dateStr);
-            
+
             const td = document.createElement('td');
-            
+
             if (isWeekend) {
                 td.className = 'weekend-col cell-WE';
                 td.textContent = 'WE';
@@ -709,7 +756,7 @@ function renderTeamTable() {
                 // Click to open context menu only on active cells
                 td.addEventListener('click', (e) => showContextMenu(e, dateStr, emp.id, td));
             }
-            
+
             tr.appendChild(td);
         }
         teamTbody.appendChild(tr);
@@ -720,7 +767,7 @@ function showContextMenu(e, dateStr, empId, cellEl) {
     if (isLocked) return;
     e.stopPropagation();
     contextMenuTarget = { dateStr, empId, cellEl };
-    
+
     const rect = cellEl.getBoundingClientRect();
     let top = rect.bottom + window.scrollY;
     let left = rect.left + window.scrollX;
@@ -729,7 +776,7 @@ function showContextMenu(e, dateStr, empId, cellEl) {
     if (left + 460 > window.innerWidth) {
         left = window.innerWidth - 470;
     }
-    
+
     contextMenu.style.top = `${top}px`;
     contextMenu.style.left = `${left}px`;
     contextMenu.classList.add('active');
@@ -747,8 +794,8 @@ function renderMembersList() {
         const li = document.createElement('li');
         li.className = 'member-item';
         li.innerHTML = `
-            <span>${escapeHTML(emp.name)}</span>
-            <button class="remove-member" data-id="${escapeHTML(emp.id)}">
+            <span>${emp.name}</span>
+            <button class="remove-member" data-id="${emp.id}">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
             </button>
         `;
@@ -786,12 +833,12 @@ function exportToExcel() {
 
     // Prepare Data Matrix
     let aoa = [];
-    
+
     // Headers row
     let headers = ["Team Member"];
     let holidayRow = ["Holidays"];
     let hasHolidays = false;
-    
+
     for (let d = 1; d <= daysInMonth; d++) {
         const dObj = new Date(year, month, d);
         const dayName = dObj.toLocaleDateString('en-US', { weekday: 'short' }).substr(0, 2);
@@ -816,7 +863,7 @@ function exportToExcel() {
             const key = `${dateStr}_${emp.id}`;
             const isWeekend = new Date(year, month, day).getDay() === 0 || new Date(year, month, day).getDay() === 6;
             const holidayName = getHolidayName(dateStr);
-            
+
             if (isWeekend) {
                 row.push("WE");
             } else if (holidayName) {
@@ -859,7 +906,7 @@ function calculateKPIs() {
     let totalWorkDays = 0;
     let takenSick = 0;
     let takenEmergency = 0;
-    let totalTaken = 0; 
+    let totalTaken = 0;
 
     // Calculate work days
     for (let day = 1; day <= daysInMonth; day++) {
@@ -867,19 +914,19 @@ function calculateKPIs() {
         const isWeekend = d.getDay() === 0 || d.getDay() === 6;
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         const holidayName = getHolidayName(dateStr);
-        
+
         if (!isWeekend && !holidayName) {
             totalWorkDays++;
-            
+
             visibleEmployees.forEach(emp => {
                 const type = state.leaves[`${dateStr}_${emp.id}`];
                 if (!type) return;
 
                 let amt = 1.0;
-                if (['AA','AP','SA','SP','EA','EP'].includes(type)) {
+                if (['AA', 'AP', 'SA', 'SP', 'EA', 'EP'].includes(type)) {
                     amt = 0.5;
                 }
-                
+
                 totalTaken += amt;
 
                 if (type.startsWith('S')) takenSick += amt;
@@ -887,9 +934,9 @@ function calculateKPIs() {
             });
         }
     }
-    
+
     const possibleWorkDays = totalWorkDays * visibleEmployees.length;
-    
+
     if (possibleWorkDays === 0) {
         kpiUtilization.textContent = '0%';
         kpiSick.textContent = '0%';
@@ -918,7 +965,7 @@ async function checkDataFile() {
     // 1. Try to open existing leavetracker.db
     try {
         dbFileHandle = await dirHandle.getFileHandle('leavetracker.db', { create: false });
-        
+
         await loadFromFile(dbFileHandle);
         state = getFullState();
         if (!state.activeRegions || state.activeRegions.length === 0) {
@@ -928,7 +975,7 @@ async function checkDataFile() {
         createFileBtn.disabled = true;
         createFileBtn.classList.add('disabled-btn');
         createFileTooltip.textContent = 'Database connected';
-        
+
         // Try to acquire the lock
         const lockResult = await acquireLock(dirHandle, currentUserName);
         if (lockResult.acquired) {
@@ -992,7 +1039,7 @@ async function checkDataFile() {
     // 3. Neither file found — offer to create a new database
     dbFileHandle = null;
     updateConnectionStatus('local');
-    
+
     createFileBtn.disabled = false;
     createFileBtn.classList.remove('disabled-btn');
     createFileTooltip.textContent = 'Click to create a new database';

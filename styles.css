@@ -149,6 +149,24 @@ body {
 .status-indicator.connected .status-dot { background-color: var(--annual); box-shadow: 0 0 8px var(--annual); }
 .status-indicator.connected .status-text { color: var(--annual); font-weight: 500; }
 
+.reset-link {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 2px;
+    margin-left: 6px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 4px;
+    transition: var(--transition);
+}
+
+.reset-link:hover {
+    color: var(--accent);
+    background-color: var(--bg-hover);
+}
+
 .w-full {
     width: 100%;
     justify-content: center;
@@ -953,4 +971,89 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-secondary);
+}
+
+/* Lock Banner */
+.lock-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 40px;
+    background: linear-gradient(135deg, rgba(234, 179, 8, 0.15), rgba(249, 115, 22, 0.1));
+    border-bottom: 1px solid rgba(234, 179, 8, 0.3);
+    color: #eab308;
+    font-size: 0.9rem;
+    font-weight: 500;
+    animation: bannerSlideIn 0.3s ease-out;
+}
+
+.lock-banner svg {
+    flex-shrink: 0;
+}
+
+.lock-banner strong {
+    color: #facc15;
+}
+
+@keyframes bannerSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-100%);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.lock-banner.hidden {
+    display: none;
+}
+
+/* App Locked — Read-only mode */
+.app-locked #add-member-btn {
+    opacity: 0.4;
+    pointer-events: none;
+    cursor: not-allowed;
+}
+
+.app-locked .cell-interactive {
+    pointer-events: none;
+    cursor: default;
+}
+
+.app-locked .cell-interactive:hover {
+    background-color: transparent;
+}
+
+.app-locked #country-select {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.app-locked .remove-region {
+    pointer-events: none;
+    display: none;
+}
+
+.app-locked .calendar-day:hover {
+    border-color: var(--border);
+    transform: none;
+    box-shadow: none;
+    cursor: default;
+}
+
+.app-locked #create-file-btn {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+/* Connection status - read-only state */
+.status-indicator.readonly .status-dot {
+    background-color: #eab308;
+    box-shadow: 0 0 8px rgba(234, 179, 8, 0.5);
+}
+.status-indicator.readonly .status-text {
+    color: #eab308;
+    font-weight: 500;
 }

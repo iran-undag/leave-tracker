@@ -7,7 +7,11 @@ let state = {
 };
 
 let dirHandle = null;
-let fileHandle = null;
+let dbFileHandle = null; // Handle for leavetracker.db
+let dbReady = false; // Whether the SQLite database is initialised
+let isLocked = false; // Whether the app is in read-only mode (another user has the lock)
+let currentUserName = null; // The current user's name for lock identification
+let heartbeatIntervalId = null; // Interval ID for heartbeat updates
 
 // Cache for API fetched holidays
 const holidayCache = {}; // { 'PH_2026': { '2026-01-01': 'New Year', ... } }
@@ -15,66 +19,6 @@ const holidayCache = {}; // { 'PH_2026': { '2026-01-01': 'New Year', ... } }
 let currentDate = new Date();
 let currentView = 'calendar'; // 'calendar' or 'team'
 let contextMenuTarget = null; // Store { dateString, employeeId, cellElement }
-
-// ========================================
-// SECURITY PATCHES - NEW FUNCTIONS
-// ========================================
-
-/**
- * SECURITY FIX #2: Validate JSON state structure
- * Prevents JSON injection via corrupted data.json files
- */
-function validateState(obj) {
-    try {
-        if (typeof obj !== 'object' || obj === null) return false;
-        
-        // Validate required properties and types
-        if (!Array.isArray(obj.employees)) return false;
-        if (typeof obj.leaves !== 'object' || obj.leaves === null) return false;
-        if (!Array.isArray(obj.activeRegions)) return false;
-        if (typeof obj.customHolidays !== 'object' || obj.customHolidays === null) return false;
-        
-        // Validate employees array structure
-        if (!obj.employees.every(emp => 
-            emp && typeof emp === 'object' && 
-            typeof emp.id === 'string' && 
-            typeof emp.name === 'string'
-        )) return false;
-        
-        // Validate leaves object (string values only)
-        if (!Object.values(obj.leaves).every(val => typeof val === 'string')) return false;
-        
-        // Validate activeRegions (array of strings)
-        if (!obj.activeRegions.every(r => typeof r === 'string')) return false;
-        
-        // Validate customHolidays (string values only)
-        if (!Object.values(obj.customHolidays).every(val => typeof val === 'string')) return false;
-        
-        return true;
-    } catch (e) {
-        console.error('State validation error:', e);
-        return false;
-    }
-}
-
-/**
- * SECURITY FIX #1: Safe DOM element creation
- * Prevents XSS by using textContent instead of innerHTML
- */
-function createSafeChip(empName, leaveType) {
-    const chip = document.createElement('div');
-    chip.className = `chip chip-${leaveType}`;
-    
-    const nameSpan = document.createElement('span');
-    nameSpan.textContent = empName; // Safe: uses textContent
-    
-    chip.appendChild(nameSpan);
-    return chip;
-}
-
-// ========================================
-// END SECURITY PATCHES
-// ========================================
 
 // DOM Elements
 const views = {
@@ -120,8 +64,14 @@ const membersList = document.getElementById('members-list');
 const contextMenu = document.getElementById('leave-context-menu');
 const ctxBtns = document.querySelectorAll('.ctx-btn');
 
+// Lock Banner
+const lockBanner = document.getElementById('lock-banner');
+const lockBannerText = document.getElementById('lock-banner-text');
+
 // Initialization
 async function init() {
+    await initDB(); // Initialise sql.js with an empty in-memory database
+    dbReady = true;
     loadState();
     setupEventListeners();
     await fetchAvailableCountries();
@@ -130,19 +80,46 @@ async function init() {
     
     // Auto sync from file system every 5 seconds if connected
     setInterval(async () => {
-        if (fileHandle && !contextMenu.classList.contains('active') && !addMemberModal.classList.contains('active')) {
+        // Only read from file if we are in locked (read-only) mode.
+        // If we have the lock, we are the source of truth.
+        if (dbFileHandle && isLocked && !contextMenu.classList.contains('active') && !addMemberModal.classList.contains('active')) {
             await readFromFile();
         }
+        // If locked, periodically check if the lock was released so we can take over
+        if (isLocked && dirHandle) {
+            await tryAcquireLockIfReleased();
+        }
     }, 5000);
+
+    // Release lock when the page is closed or navigated away
+    window.addEventListener('beforeunload', async () => {
+        if (dirHandle && !isLocked) {
+            // Use synchronous-ish approach: we can't fully await in beforeunload,
+            // but we try our best to delete the lock file
+            try {
+                await releaseLock(dirHandle);
+            } catch (e) {
+                // Best effort
+            }
+        }
+    });
 }
 
 function loadState() {
-    state = {
-        employees: [],
-        leaves: {},
-        activeRegions: ['PH'],
-        customHolidays: {}
-    };
+    if (dbReady && isDBReady()) {
+        state = getFullState();
+        // Ensure defaults
+        if (!state.activeRegions || state.activeRegions.length === 0) {
+            state.activeRegions = ['PH'];
+        }
+    } else {
+        state = {
+            employees: [],
+            leaves: {},
+            activeRegions: ['PH'],
+            customHolidays: {}
+        };
+    }
 }
 
 async function fetchAvailableCountries() {
@@ -205,70 +182,139 @@ function getVisibleEmployees() {
 }
 
 function saveState() {
-    if (fileHandle) {
+    if (dbFileHandle) {
         saveToFileSystem();
     }
 }
 
 async function saveToFileSystem() {
-    if (!fileHandle) return;
+    if (!dbFileHandle || !isDBReady() || isLocked) return;
     try {
-        const writable = await fileHandle.createWritable();
-        await writable.write(JSON.stringify(state));
-        await writable.close();
+        await saveToFile(dbFileHandle);
     } catch (e) {
         console.error('Save to file system failed', e);
     }
 }
 
-/**
- * PATCHED: readFromFile()
- * SECURITY FIX #2: Added state validation before using parsed JSON
- */
 async function readFromFile() {
-    if (!fileHandle) return;
+    if (!dbFileHandle) return;
     try {
-        const file = await fileHandle.getFile();
-        const contents = await file.text();
-        
-        if (contents) {
-            try {
-                const parsed = JSON.parse(contents);
-                
-                // SECURITY: Validate parsed state structure BEFORE using it
-                if (validateState(parsed)) {
-                    state = parsed;
-                    if (!state.activeRegions) state.activeRegions = ['PH'];
-                    renderApp();
-                } else {
-                    console.error('Invalid state structure in data.json');
-                    alert("Loaded data.json is invalid or corrupted. Data will not be used.");
-                }
-            } catch (parseError) {
-                console.error('JSON parsing error:', parseError);
-                alert("Failed to parse data.json. File may be corrupted.");
-            }
+        await loadFromFile(dbFileHandle);
+        state = getFullState();
+        if (!state.activeRegions || state.activeRegions.length === 0) {
+            state.activeRegions = ['PH'];
         }
+        renderApp();
     } catch (e) {
-        console.error('Failed to read file', e);
+        console.error('Failed to read database file', e);
     }
 }
 
-function updateConnectionStatus(isConnected) {
+function updateConnectionStatus(mode) {
+    // mode: 'connected' | 'readonly' | 'local'
     const statusText = connectionStatus.querySelector('.status-text');
-    if (isConnected) {
-        connectionStatus.classList.remove('local');
+    connectionStatus.classList.remove('local', 'connected', 'readonly');
+
+    if (mode === 'connected') {
         connectionStatus.classList.add('connected');
-        statusText.textContent = 'Connected to Network';
+        statusText.textContent = currentUserName ? `Editing as ${currentUserName}` : 'Connected — Editing';
+    } else if (mode === 'readonly') {
+        connectionStatus.classList.add('readonly');
+        statusText.textContent = 'Connected — Read Only';
     } else {
-        connectionStatus.classList.remove('connected');
         connectionStatus.classList.add('local');
         statusText.textContent = 'Local Storage Only';
     }
 }
 
+/**
+ * Enter or exit locked (read-only) mode.
+ */
+function setLockedMode(locked, holderName) {
+    isLocked = locked;
+    if (locked) {
+        document.body.classList.add('app-locked');
+        lockBanner.classList.remove('hidden');
+        lockBannerText.innerHTML = `This database is currently being edited by <strong>${holderName}</strong>. You are in read-only mode.`;
+        updateConnectionStatus('readonly');
+    } else {
+        document.body.classList.remove('app-locked');
+        lockBanner.classList.add('hidden');
+        updateConnectionStatus('connected');
+    }
+}
+
+/**
+ * Periodically check if the lock holder has released the lock.
+ * If released or stale, acquire it and switch to edit mode.
+ */
+async function tryAcquireLockIfReleased() {
+    if (!dirHandle || !currentUserName) return;
+    const lockData = await checkLock(dirHandle);
+    if (!lockData || isLockStale(lockData)) {
+        // Lock was released or went stale — acquire it
+        const result = await acquireLock(dirHandle, currentUserName);
+        if (result.acquired) {
+            setLockedMode(false, null);
+            startHeartbeat();
+            console.log('Lock acquired — switched to edit mode');
+        }
+    }
+}
+
+/**
+ * Start the heartbeat interval to keep the lock alive.
+ */
+function startHeartbeat() {
+    if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
+    heartbeatIntervalId = setInterval(async () => {
+        if (dirHandle && !isLocked && currentUserName) {
+            const ok = await updateHeartbeat(dirHandle, currentUserName);
+            if (!ok) {
+                // Lost the lock (someone else took it or it went stale and was snatched)
+                const lockData = await checkLock(dirHandle);
+                const holder = lockData ? lockData.user : 'Unknown';
+                setLockedMode(true, holder);
+                clearInterval(heartbeatIntervalId);
+                heartbeatIntervalId = null;
+                console.warn(`Lock lost! It is now held by ${holder}. Switched to read-only mode.`);
+            }
+        }
+    }, HEARTBEAT_INTERVAL_MS);
+}
+
+/**
+ * Stop the heartbeat interval.
+ */
+function stopHeartbeat() {
+    if (heartbeatIntervalId) {
+        clearInterval(heartbeatIntervalId);
+        heartbeatIntervalId = null;
+    }
+}
+
 function generateId() {
     return Math.random().toString(36).substr(2, 9);
+}
+
+/**
+ * Reset the user name by clearing localStorage and prompting again.
+ */
+function resetUserName() {
+    localStorage.removeItem('leavetracker_username');
+    const oldName = currentUserName;
+    currentUserName = getLockUserName();
+    
+    // If we have the lock, update it with the new name
+    if (dirHandle && !isLocked && currentUserName !== oldName) {
+        acquireLock(dirHandle, currentUserName).then(() => {
+            updateConnectionStatus('connected');
+            renderApp();
+        });
+    } else {
+        updateConnectionStatus(isLocked ? 'readonly' : (dbFileHandle ? 'connected' : 'local'));
+        renderApp();
+    }
 }
 
 // Event Listeners
@@ -312,29 +358,43 @@ function setupEventListeners() {
 
     if (createFileBtn) {
         createFileBtn.addEventListener('click', async () => {
+            if (isLocked) return;
             if (!dirHandle) {
                 alert("Please click 'Select Shared Folder' first so the app knows exactly where you want to save the new file.");
                 return;
             }
             try {
-                fileHandle = await dirHandle.getFileHandle('data.json', { create: true });
+                // Re-initialise a fresh empty database
+                await initDB();
+                dbReady = true;
+                // Add default region
+                addRegion('PH');
+
+                dbFileHandle = await dirHandle.getFileHandle('leavetracker.db', { create: true });
                 await saveToFileSystem();
+
+                // Acquire the lock
+                currentUserName = getLockUserName();
+                await acquireLock(dirHandle, currentUserName);
+                startHeartbeat();
                 
-                updateConnectionStatus(true);
+                updateConnectionStatus('connected');
                 createFileBtn.disabled = true;
                 createFileBtn.classList.add('disabled-btn');
-                createFileTooltip.textContent = 'data.json already exists';
+                createFileTooltip.textContent = 'Database connected';
                 
-                // Refresh the app to clear out any past memory and prep it for the new file
+                // Refresh state from the new database
+                loadState();
                 renderApp();
             } catch (e) {
-                console.error('Failed to create file', e);
+                console.error('Failed to create database', e);
             }
         });
     }
 
     // Modals
     addMemberBtn.addEventListener('click', () => {
+        if (isLocked) return;
         renderMembersList();
         addMemberModal.classList.add('active');
         memberNameInput.focus();
@@ -349,9 +409,12 @@ function setupEventListeners() {
     // Add Member
     addMemberForm.addEventListener('submit', (e) => {
         e.preventDefault();
+        if (isLocked) return;
         const value = memberNameInput.value.trim();
         if (value) {
-            state.employees.push({ id: generateId(), name: value });
+            const id = generateId();
+            addEmployee(id, value);
+            state = getFullState();
             saveState();
             memberNameInput.value = '';
             renderMembersList();
@@ -369,17 +432,18 @@ function setupEventListeners() {
     // Assign Leave from context menu
     ctxBtns.forEach(btn => {
         btn.addEventListener('click', (e) => {
+            if (isLocked) { hideContextMenu(); return; }
             if (!contextMenuTarget) return;
             const type = e.target.closest('.ctx-btn').getAttribute('data-type');
             const { dateStr, empId } = contextMenuTarget;
-            const key = `${dateStr}_${empId}`;
             
             if (type === 'CLEAR') {
-                delete state.leaves[key];
+                clearLeave(dateStr, empId);
             } else {
-                state.leaves[key] = type;
+                setLeave(dateStr, empId, type);
             }
             
+            state = getFullState();
             saveState();
             hideContextMenu();
             renderApp(); // Re-render to update both views
@@ -389,8 +453,15 @@ function setupEventListeners() {
     // Export Excel
     exportBtn.addEventListener('click', exportToExcel);
 
+    // Reset Name
+    const resetNameBtn = document.getElementById('reset-name-btn');
+    if (resetNameBtn) {
+        resetNameBtn.addEventListener('click', resetUserName);
+    }
+
     // Holiday Region Selection Dropdown
     countrySelect.addEventListener('change', async (e) => {
+        if (isLocked) { countrySelect.value = ''; return; }
         const val = e.target.value;
         if (!val) return;
         if (!state.activeRegions) state.activeRegions = [];
@@ -400,7 +471,8 @@ function setupEventListeners() {
             countrySelect.value = '';
             return;
         }
-        state.activeRegions.push(val);
+        addRegion(val);
+        state = getFullState();
         countrySelect.value = '';
         saveState();
         await fetchActiveHolidays();
@@ -409,9 +481,11 @@ function setupEventListeners() {
 
     // Delegated listener for removing active region holidays
     holidaySelectorLinks.addEventListener('click', (e) => {
+        if (isLocked) return;
         if (e.target.classList.contains('remove-region')) {
             const code = e.target.closest('button').getAttribute('data-region');
-            state.activeRegions = state.activeRegions.filter(r => r !== code);
+            removeRegion(code);
+            state = getFullState();
             saveState();
             renderApp();
         }
@@ -419,6 +493,7 @@ function setupEventListeners() {
 
     // Add Custom Holiday via Calendar
     calendarGrid.addEventListener('click', (e) => {
+        if (isLocked) return;
         const dayEl = e.target.closest('.calendar-day');
         if (!dayEl || dayEl.classList.contains('empty')) return;
         
@@ -431,12 +506,12 @@ function setupEventListeners() {
         const existing = (state.customHolidays && state.customHolidays[dateStr]) ? state.customHolidays[dateStr] : '';
         const name = prompt(`Add custom holiday for ${dateStr} (Leave blank to remove):`, existing);
         if (name !== null) {
-            if (!state.customHolidays) state.customHolidays = {};
             if (name.trim() === '') {
-                delete state.customHolidays[dateStr];
+                removeCustomHoliday(dateStr);
             } else {
-                state.customHolidays[dateStr] = name.trim();
+                setCustomHoliday(dateStr, name.trim());
             }
+            state = getFullState();
             saveState();
             renderApp();
         }
@@ -491,10 +566,7 @@ function updateMonthDisplay() {
     monthDisplay.textContent = currentDate.toLocaleDateString('en-US', opts);
 }
 
-/**
- * PATCHED: renderCalendar()
- * SECURITY FIX #1: Use safe DOM creation instead of innerHTML with user data
- */
+// Calendar View
 function renderCalendar() {
     calendarGrid.innerHTML = '';
     
@@ -528,48 +600,27 @@ function renderCalendar() {
         const holidayName = getHolidayName(dateStr);
         const isWeekend = new Date(year, month, day).getDay() === 0 || new Date(year, month, day).getDay() === 6;
 
-        // SECURITY FIX #1: Create header safely using DOM methods
-        const headerDiv = document.createElement('div');
-        headerDiv.className = 'day-header';
-        
-        const numDiv = document.createElement('div');
-        numDiv.className = 'day-number';
-        numDiv.textContent = day; // Safe: uses textContent
-        headerDiv.appendChild(numDiv);
-        
-        if (holidayName) {
-            const holidayDiv = document.createElement('div');
-            holidayDiv.className = 'holiday-name';
-            holidayDiv.title = holidayName;
-            holidayDiv.textContent = holidayName; // Safe: uses textContent
-            headerDiv.appendChild(holidayDiv);
-        } else if (isWeekend) {
-            const wDiv = document.createElement('div');
-            wDiv.className = 'holiday-name';
-            wDiv.style.background = 'var(--weekend-bg)';
-            wDiv.style.color = 'var(--weekend)';
-            wDiv.textContent = 'Weekend';
-            headerDiv.appendChild(wDiv);
-        }
-
-        // SECURITY FIX #1: Create chips using safe DOM creation
-        const chipsDiv = document.createElement('div');
-        chipsDiv.className = 'leave-chips';
-        
+        let chipsHtml = '';
         getVisibleEmployees().forEach(emp => {
             const key = `${dateStr}_${emp.id}`;
             if (state.leaves[key]) {
                 const type = state.leaves[key];
-                // Use safe chip creation function
-                const chip = createSafeChip(emp.name, type);
-                chipsDiv.appendChild(chip);
+                chipsHtml += `<div class="chip chip-${type}"><span>${emp.name}</span></div>`;
             }
         });
 
-        // Append header and chips to day element
-        dayEl.appendChild(headerDiv);
-        dayEl.appendChild(chipsDiv);
-        
+        let headerHtml = `<div class="day-header"><div class="day-number">${day}</div>`;
+        if (holidayName) {
+            headerHtml += `<div class="holiday-name" title="${holidayName}">${holidayName}</div>`;
+        } else if (isWeekend) {
+            headerHtml += `<div class="holiday-name" style="background:var(--weekend-bg); color:var(--weekend);">Weekend</div>`;
+        }
+        headerHtml += `</div>`;
+
+        dayEl.innerHTML = `
+            ${headerHtml}
+            <div class="leave-chips">${chipsHtml}</div>
+        `;
         calendarGrid.appendChild(dayEl);
     }
 }
@@ -652,6 +703,7 @@ function renderTeamTable() {
 }
 
 function showContextMenu(e, dateStr, empId, cellEl) {
+    if (isLocked) return;
     e.stopPropagation();
     contextMenuTarget = { dateStr, empId, cellEl };
     
@@ -674,41 +726,31 @@ function hideContextMenu() {
     contextMenuTarget = null;
 }
 
-/**
- * PATCHED: renderMembersList()
- * SECURITY FIX #1: Use safe DOM creation instead of innerHTML
- */
+// Modal Members List
 function renderMembersList() {
     membersList.innerHTML = '';
     getVisibleEmployees().forEach(emp => {
         const li = document.createElement('li');
         li.className = 'member-item';
-        
-        // SECURITY FIX #1: Create name span safely
-        const nameSpan = document.createElement('span');
-        nameSpan.textContent = emp.name; // Safe: uses textContent
-        
-        const removeBtn = document.createElement('button');
-        removeBtn.className = 'remove-member';
-        removeBtn.setAttribute('data-id', emp.id);
-        removeBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9"></path></svg>`;
-        
-        li.appendChild(nameSpan);
-        li.appendChild(removeBtn);
+        li.innerHTML = `
+            <span>${emp.name}</span>
+            <button class="remove-member" data-id="${emp.id}">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+            </button>
+        `;
         membersList.appendChild(li);
     });
 
     // Attach remove handlers
     document.querySelectorAll('.remove-member').forEach(btn => {
         btn.addEventListener('click', (e) => {
+            if (isLocked) return;
             const id = e.target.closest('.remove-member').getAttribute('data-id');
             // Soft remove employee (set endYearMonth to current viewed month)
-            const emp = state.employees.find(e => e.id === id);
-            if (emp) {
-                const year = currentDate.getFullYear();
-                const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-                emp.endYearMonth = `${year}-${month}`;
-            }
+            const year = currentDate.getFullYear();
+            const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+            softDeleteEmployee(id, `${year}-${month}`);
+            state = getFullState();
             saveState();
             renderMembersList();
             renderApp();
@@ -855,35 +897,97 @@ init();
 
 async function checkDataFile() {
     if (!dirHandle) return;
+
+    // Prompt for username (needed for lock)
+    currentUserName = getLockUserName();
+
+    // 1. Try to open existing leavetracker.db
     try {
-        fileHandle = await dirHandle.getFileHandle('data.json', { create: false });
+        dbFileHandle = await dirHandle.getFileHandle('leavetracker.db', { create: false });
         
-        updateConnectionStatus(true);
+        await loadFromFile(dbFileHandle);
+        state = getFullState();
+        if (!state.activeRegions || state.activeRegions.length === 0) {
+            state.activeRegions = ['PH'];
+        }
+
         createFileBtn.disabled = true;
         createFileBtn.classList.add('disabled-btn');
-        createFileTooltip.textContent = 'data.json already exists';
+        createFileTooltip.textContent = 'Database connected';
         
-        await readFromFile();
-    } catch (e) {
-        if (e.name === 'NotFoundError') {
-            fileHandle = null;
-            updateConnectionStatus(false);
-            
-            createFileBtn.disabled = false;
-            createFileBtn.classList.remove('disabled-btn');
-            createFileTooltip.textContent = 'Click to create data.json';
-
-            // Reset state if data.json is missing in the connected directory
-            state = {
-                employees: [],
-                leaves: {},
-                activeRegions: ['PH'],
-                customHolidays: {}
-            };
-            renderApp();
-            renderMembersList();
+        // Try to acquire the lock
+        const lockResult = await acquireLock(dirHandle, currentUserName);
+        if (lockResult.acquired) {
+            setLockedMode(false, null);
+            startHeartbeat();
         } else {
-            console.error('Error checking file', e);
+            setLockedMode(true, lockResult.holder);
+        }
+
+        renderApp();
+        return;
+    } catch (e) {
+        if (e.name !== 'NotFoundError') {
+            console.error('Error opening database file', e);
+            return;
         }
     }
+
+    // 2. No .db file found — check for legacy data.json to migrate
+    try {
+        const jsonHandle = await dirHandle.getFileHandle('data.json', { create: false });
+        const file = await jsonHandle.getFile();
+        const contents = await file.text();
+
+        if (contents) {
+            const jsonState = JSON.parse(contents);
+
+            // Re-initialise a clean database and migrate
+            await initDB();
+            dbReady = true;
+            migrateFromJSON(jsonState);
+
+            // Save the new .db file
+            dbFileHandle = await dirHandle.getFileHandle('leavetracker.db', { create: true });
+            await saveToFileSystem();
+
+            state = getFullState();
+            if (!state.activeRegions || state.activeRegions.length === 0) {
+                state.activeRegions = ['PH'];
+            }
+
+            // Acquire the lock (we just created the db, so we should get it)
+            await acquireLock(dirHandle, currentUserName);
+            startHeartbeat();
+            updateConnectionStatus('connected');
+
+            createFileBtn.disabled = true;
+            createFileBtn.classList.add('disabled-btn');
+            createFileTooltip.textContent = 'Database connected (migrated from data.json)';
+
+            console.log('Successfully migrated data.json → leavetracker.db');
+            renderApp();
+            return;
+        }
+    } catch (e) {
+        if (e.name !== 'NotFoundError') {
+            console.error('Error reading data.json for migration', e);
+        }
+    }
+
+    // 3. Neither file found — offer to create a new database
+    dbFileHandle = null;
+    updateConnectionStatus('local');
+    
+    createFileBtn.disabled = false;
+    createFileBtn.classList.remove('disabled-btn');
+    createFileTooltip.textContent = 'Click to create a new database';
+
+    // Reset to clean state
+    await initDB();
+    dbReady = true;
+    addRegion('PH');
+    state = getFullState();
+    renderApp();
+    renderMembersList();
 }

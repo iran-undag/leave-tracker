@@ -4,9 +4,6 @@
 
 const DB_FILENAME = 'leavetracker.db';
 
-// FIX #5: Define valid leave types whitelist for input validation
-const VALID_LEAVE_TYPES = ['AL', 'AA', 'AP', 'SL', 'SA', 'SP', 'EL', 'EA', 'EP', 'BL', 'OL', 'ML', 'PL'];
-
 let _db = null; // sql.js Database instance
 
 // ---------------------------------------------------------------------------
@@ -216,18 +213,7 @@ function getLeavesForMonth(year, month) {
     return result;
 }
 
-/**
- * Set a leave record with validation.
- * FIX #5: Add leave type whitelist validation
- * @param {string} date - YYYY-MM-DD format
- * @param {string} employeeId
- * @param {string} leaveType - Must be in VALID_LEAVE_TYPES
- */
 function setLeave(date, employeeId, leaveType) {
-    // SECURITY FIX: Validate leave type against whitelist
-    if (!VALID_LEAVE_TYPES.includes(leaveType)) {
-        throw new Error(`Invalid leave type: ${leaveType}. Must be one of: ${VALID_LEAVE_TYPES.join(', ')}`);
-    }
     _db.run(
         'INSERT OR REPLACE INTO leaves (date, employee_id, leave_type) VALUES (?, ?, ?)',
         [date, employeeId, leaveType]

@@ -5,31 +5,21 @@
 const LOCK_FILENAME = 'leavetracker.lock';
 const STALE_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 const HEARTBEAT_INTERVAL_MS = 30 * 1000; // 30 seconds
-const MAX_USERNAME_LENGTH = 100; // SECURITY FIX #5: Limit username length
 
 /**
  * Get the stored username from localStorage, or prompt the user for one.
- * FIX #5: Add input validation for username length and content
  * @returns {string} The username
  */
 function getLockUserName() {
     let name = localStorage.getItem('leavetracker_username');
     if (!name) {
         name = prompt('Enter your name (used to identify who is editing):');
-        if (name && name.trim() && name.trim().length > 0 && name.trim().length <= MAX_USERNAME_LENGTH) {
+        if (name && name.trim()) {
             name = name.trim();
             localStorage.setItem('leavetracker_username', name);
         } else {
-            // Reject if too long, empty, or null
-            if (name && name.trim().length > MAX_USERNAME_LENGTH) {
-                console.warn('Username too long, using default');
-            }
             name = 'Unknown User';
         }
-    } else if (name.length > MAX_USERNAME_LENGTH) {
-        // Sanitize existing data that may be too long
-        localStorage.removeItem('leavetracker_username');
-        name = 'Unknown User';
     }
     return name;
 }

@@ -11,6 +11,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <!-- SheetJS for Excel export -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <!-- DOMPurify for XSS mitigation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.11/purify.min.js"></script>
     <!-- sql.js for SQLite in the browser -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.11.0/sql-wasm.js"></script>
     <link rel="stylesheet" href="styles.css">
@@ -173,28 +175,7 @@
                                 </svg>
                             </div>
                             <h2>Welcome to LeaveTracker</h2>
-                            <p>To get started, please connect to a shared folder or create a new database to track your team's leaves.</p>
-                            
-                            <div class="setup-actions">
-                                <button id="setup-select-dir-btn" class="setup-btn">
-                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                                    </svg>
-                                    <span>Select Shared Folder</span>
-                                    <small>Open an existing database folder</small>
-                                </button>
-                                
-                                <button id="setup-create-file-btn" class="setup-btn">
-                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                        <polyline points="14 2 14 8 20 8" />
-                                        <line x1="12" y1="18" x2="12" y2="12" />
-                                        <line x1="9" y1="15" x2="15" y2="15" />
-                                    </svg>
-                                    <span>Create Database</span>
-                                    <small>Start a new tracker in a folder</small>
-                                </button>
-                            </div>
+                            <p>To get started, please use the <strong>Data Connection</strong> section on the sidebar to connect to a shared folder or create a new database.</p>
                         </div>
                     </div>
                 </section>
@@ -285,7 +266,7 @@
             <div class="modal-body">
                 <form id="add-member-form">
                     <div class="input-group">
-                        <input type="text" id="member-name-input" placeholder="Enter team member name" required>
+                        <input type="text" id="member-name-input" placeholder="Enter team member name" maxlength="35" required>
                         <button type="submit" class="primary-btn">Add</button>
                     </div>
                 </form>

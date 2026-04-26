@@ -244,7 +244,7 @@ function setLockedMode(locked, holderName) {
     if (locked) {
         document.body.classList.add('app-locked');
         lockBanner.classList.remove('hidden');
-        lockBannerText.innerHTML = `This database is currently being edited by <strong>${holderName}</strong>. You are in read-only mode.`;
+        lockBannerText.innerHTML = `This database is currently being edited by <strong>${DOMPurify.sanitize(holderName)}</strong>. You are in read-only mode.`;
         updateConnectionStatus('readonly');
     } else {
         document.body.classList.remove('app-locked');
@@ -393,26 +393,6 @@ function setupEventListeners() {
         });
     }
 
-    // Setup View Buttons
-    const setupSelectBtn = document.getElementById('setup-select-dir-btn');
-    const setupCreateBtn = document.getElementById('setup-create-file-btn');
-
-    if (setupSelectBtn) {
-        setupSelectBtn.addEventListener('click', () => selectDirBtn.click());
-    }
-
-    if (setupCreateBtn) {
-        setupCreateBtn.addEventListener('click', () => {
-            if (dirHandle) {
-                createFileBtn.click();
-            } else {
-                // If no dir handle yet, we need to pick a folder first
-                selectDirBtn.click().then(() => {
-                    if (dirHandle) createFileBtn.click();
-                });
-            }
-        });
-    }
 
     if (createFileBtn) {
         createFileBtn.addEventListener('click', async () => {
@@ -469,7 +449,7 @@ function setupEventListeners() {
     addMemberForm.addEventListener('submit', (e) => {
         e.preventDefault();
         if (isLocked) return;
-        const value = memberNameInput.value.trim();
+        const value = memberNameInput.value.trim().substring(0, 35);
         if (value) {
             const id = generateId();
             addEmployee(id, value);
@@ -568,7 +548,7 @@ function setupEventListeners() {
             if (name.trim() === '') {
                 removeCustomHoliday(dateStr);
             } else {
-                setCustomHoliday(dateStr, name.trim());
+                setCustomHoliday(dateStr, name.trim().substring(0, 35));
             }
             state = getFullState();
             saveState();
@@ -617,7 +597,7 @@ function updateHolidaySelector() {
         const btn = document.createElement('button');
         btn.className = 'holiday-btn active';
         btn.setAttribute('data-region', code);
-        btn.innerHTML = `${code} <span class="remove-region">&times;</span>`;
+        btn.innerHTML = `${DOMPurify.sanitize(code)} <span class="remove-region">&times;</span>`;
         holidaySelectorLinks.appendChild(btn);
     });
 }
@@ -666,13 +646,13 @@ function renderCalendar() {
             const key = `${dateStr}_${emp.id}`;
             if (state.leaves[key]) {
                 const type = state.leaves[key];
-                chipsHtml += `<div class="chip chip-${type}"><span>${emp.name}</span></div>`;
+                chipsHtml += `<div class="chip chip-${type}"><span>${DOMPurify.sanitize(emp.name)}</span></div>`;
             }
         });
 
         let headerHtml = `<div class="day-header"><div class="day-number">${day}</div>`;
         if (holidayName) {
-            headerHtml += `<div class="holiday-name" title="${holidayName}">${holidayName}</div>`;
+            headerHtml += `<div class="holiday-name" title="${DOMPurify.sanitize(holidayName)}">${DOMPurify.sanitize(holidayName)}</div>`;
         } else if (isWeekend) {
             headerHtml += `<div class="holiday-name" style="background:var(--weekend-bg); color:var(--weekend);">Weekend</div>`;
         }
@@ -794,7 +774,7 @@ function renderMembersList() {
         const li = document.createElement('li');
         li.className = 'member-item';
         li.innerHTML = `
-            <span>${emp.name}</span>
+            <span>${DOMPurify.sanitize(emp.name)}</span>
             <button class="remove-member" data-id="${emp.id}">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
             </button>

@@ -15,7 +15,7 @@ function getLockUserName() {
     if (!name) {
         name = prompt('Enter your name (used to identify who is editing):');
         if (name && name.trim()) {
-            name = name.trim();
+            name = name.trim().substring(0, 30);
             localStorage.setItem('leavetracker_username', name);
         } else {
             name = 'Unknown User';
